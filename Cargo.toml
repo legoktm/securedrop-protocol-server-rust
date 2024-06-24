@@ -1,0 +1,11 @@
+[package]
+name = "securedrop-protocol-server-rust"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.86"
+base64 = "0.22.1"
+crypto_box = "0.9.1"
+ed25519-dalek = { version = "2.1.1", features = ["rand_core"] }
+rand = "0.8.5"
