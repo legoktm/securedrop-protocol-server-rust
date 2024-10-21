@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::{fs, path::Path};
 
-mod pki;
+use securedrop_protocol::pki;
 
 const KEY_FOLDER: &str = "keys";
 
@@ -10,13 +10,20 @@ fn initialize_keys() -> Result<()> {
     if !folder.exists() {
         fs::create_dir(folder)?;
     }
+    println!("Storing keys in folder: {}", folder.display());
     // Create root and intermediate keys
     let mut root = pki::generate_signing_keypair(folder, "root")?;
+    println!("Generated root key");
     let mut intermediate =
         pki::generate_signing_keypair(folder, "intermediate")?;
     let sig =
         pki::sign_data(&mut root, &intermediate.verifying_key().to_bytes());
     fs::write(folder.join("intermediate.sig"), sig)?;
+    // Now verify the root and intermediate signatures
+    pki::verify_root_intermediate(folder)?;
+
+    println!("Generated and signed intermediate key");
+
     // Create a journalist
     let journo_folder = folder.join("journalist");
     if !journo_folder.exists() {
@@ -28,8 +35,10 @@ fn initialize_keys() -> Result<()> {
             &mut intermediate,
             &format!("journalist{i}"),
         )?;
+        println!("Generated and signed journalist{i} key");
     }
 
+    println!("Done!");
     Ok(())
 }
 

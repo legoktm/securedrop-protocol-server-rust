@@ -326,7 +326,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "securedrop-protocol-server-rust"
+name = "securedrop-protocol"
 version = "0.1.0"
 dependencies = [
  "anyhow",
