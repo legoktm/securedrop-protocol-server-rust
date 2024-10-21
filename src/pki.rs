@@ -1,6 +1,6 @@
 use anyhow::Result;
 use base64::prelude::*;
-use crypto_box::SecretKey;
+use crypto_box::{PublicKey, SecretKey};
 use ed25519_dalek::{
     ed25519::signature::SignerMut, Signature, SigningKey, Verifier,
     VerifyingKey,
@@ -34,17 +34,42 @@ pub fn sign_data(signer: &mut SigningKey, bytes: &[u8]) -> String {
     BASE64_STANDARD.encode(signature.to_bytes())
 }
 
-fn load_public_key(folder: &Path, name: &str) -> Result<VerifyingKey> {
+fn load_verifying_key_from_file(
+    folder: &Path,
+    name: &str,
+) -> Result<VerifyingKey> {
     let bytes = fs::read(folder.join(format!("{name}.public")))?;
     Ok(VerifyingKey::from_bytes(
         BASE64_STANDARD.decode(bytes)?.as_slice().try_into()?,
     )?)
 }
 
+pub fn load_verifying_key_from_bytes(bytes: &[u8]) -> Result<VerifyingKey> {
+    Ok(VerifyingKey::from_bytes(
+        BASE64_STANDARD.decode(bytes)?.as_slice().try_into()?,
+    )?)
+}
+
+pub fn load_public_key(bytes: &[u8]) -> Result<PublicKey> {
+    Ok(PublicKey::from_bytes(
+        BASE64_STANDARD.decode(bytes)?.as_slice().try_into()?,
+    ))
+}
+
+/// Verify a signature from the intermediate key
+pub fn verify_intermediate_signature(
+    contents: &[u8],
+    signature: &[u8],
+) -> Result<()> {
+    let intermediate = load_verifying_key_from_bytes(contents)?;
+    intermediate.verify(contents, &Signature::from_slice(signature)?)?;
+    Ok(())
+}
+
 pub fn verify_root_intermediate(folder: &Path) -> Result<()> {
     // Load the root and intermediate keys
-    let root = load_public_key(folder, "root")?;
-    let intermediate = load_public_key(folder, "intermediate")?;
+    let root = load_verifying_key_from_file(folder, "root")?;
+    let intermediate = load_verifying_key_from_file(folder, "intermediate")?;
     let signature = fs::read(folder.join("intermediate.sig"))?;
     // Verify the signature created by the root key of the intermediate key
     root.verify(

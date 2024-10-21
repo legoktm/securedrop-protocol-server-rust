@@ -9,3 +9,5 @@ base64 = "0.22.1"
 crypto_box = "0.9.1"
 ed25519-dalek = { version = "2.1.1", features = ["rand_core"] }
 rand = "0.8.5"
+rocket = { version = "0.5.1", features = ["json"] }
+serde = "1.0.210"
