@@ -12,13 +12,14 @@ fn initialize_keys() -> Result<()> {
     }
     println!("Storing keys in folder: {}", folder.display());
     // Create root and intermediate keys
-    let mut root = pki::generate_signing_keypair(folder, "root")?;
+    let root = pki::generate_root_keypair();
+    fs::write(folder.join("root.key"), serde_json::to_string(&root)?)?;
     println!("Generated root key");
-    let mut intermediate =
-        pki::generate_signing_keypair(folder, "intermediate")?;
-    let sig =
-        pki::sign_data(&mut root, &intermediate.verifying_key().to_bytes());
-    fs::write(folder.join("intermediate.sig"), sig)?;
+    let intermediate = pki::generate_signed_keypair(&mut root.as_signing_key());
+    fs::write(
+        folder.join("intermediate.key"),
+        serde_json::to_string(&intermediate)?,
+    )?;
     // Now verify the root and intermediate signatures
     pki::verify_root_intermediate(folder)?;
 
@@ -30,10 +31,10 @@ fn initialize_keys() -> Result<()> {
         fs::create_dir(&journo_folder)?;
     }
     for i in 1..=3 {
-        pki::generate_journalist(
-            &journo_folder,
-            &mut intermediate,
-            &format!("journalist{i}"),
+        let journalist = pki::generate_journalist(&intermediate);
+        fs::write(
+            journo_folder.join(format!("journalist{i}.key")),
+            serde_json::to_string(&journalist)?,
         )?;
         println!("Generated and signed journalist{i} key");
     }

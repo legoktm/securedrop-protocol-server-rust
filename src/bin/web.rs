@@ -1,6 +1,7 @@
 use anyhow::Result;
+use base64::prelude::*;
 use rocket::serde::json::Json;
-use securedrop_protocol::pki;
+use securedrop_protocol::pki::{self, PublicJournalist};
 use serde::{Deserialize, Serialize};
 
 #[macro_use]
@@ -15,6 +16,7 @@ struct StatusResponse {
 fn index() -> Json<StatusResponse> {
     Json(StatusResponse { status: "OK" })
 }
+/// Base64-encoded journalist public keys + signature information
 #[derive(Deserialize, Debug)]
 struct AddJournalistRequest {
     journalist_key: String,
@@ -35,18 +37,28 @@ async fn post_journalists(
 }
 
 fn add_journalist(request: AddJournalistRequest) -> Result<()> {
-    let journalist_verifying_key =
-        pki::load_verifying_key_from_bytes(request.journalist_key.as_bytes())?;
-    // verify the key's signature
+    let journalist = PublicJournalist {
+        signing_key: BASE64_STANDARD
+            .decode(request.journalist_key)?
+            .as_slice()
+            .try_into()?,
+        signing_signature: BASE64_STANDARD.decode(request.journalist_sig)?,
+        encrypting_key: BASE64_STANDARD
+            .decode(request.journalist_fetching_key)?
+            .as_slice()
+            .try_into()?,
+        encrypting_signature: BASE64_STANDARD
+            .decode(request.journalist_fetching_sig)?,
+    };
+
+    // FIXME: these checks should be part of the PublicJournalist constructor
     pki::verify_intermediate_signature(
-        journalist_verifying_key.as_bytes(),
-        request.journalist_sig.as_bytes(),
+        &journalist.signing_key,
+        &journalist.signing_signature,
     )?;
-    let journalist_fetching_key =
-        pki::load_public_key(request.journalist_fetching_key.as_bytes())?;
     pki::verify_intermediate_signature(
-        journalist_fetching_key.as_bytes(),
-        request.journalist_fetching_sig.as_bytes(),
+        &journalist.encrypting_key,
+        &journalist.encrypting_signature,
     )?;
     // TODO figure out data storage
     todo!();
