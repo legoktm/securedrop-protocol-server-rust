@@ -7,7 +7,9 @@ use std::{fs, path::Path};
 
 #[derive(Serialize, Deserialize)]
 pub struct RootKeyPair {
+    #[serde(with = "serde_base64")]
     secret: [u8; 32],
+    #[serde(with = "serde_base64")]
     public: [u8; 32],
 }
 
@@ -19,11 +21,12 @@ impl RootKeyPair {
 
 #[derive(Serialize, Deserialize)]
 pub struct SignedKeyPair {
+    #[serde(with = "serde_base64")]
     secret: [u8; 32],
+    #[serde(with = "serde_base64")]
     public: [u8; 32],
-    // TODO: Make constant length, serde doesn't support arrays over 32:
-    // https://stackoverflow.com/questions/48782047/how-do-i-use-serde-to-deserialize-arrays-greater-than-32-elements-such-as-u8
-    signature: Vec<u8>,
+    #[serde(with = "serde_base64")]
+    signature: [u8; 64],
 }
 
 impl SignedKeyPair {
@@ -57,7 +60,7 @@ pub fn generate_signed_keypair(signer: &mut SigningKey) -> SignedKeyPair {
     SignedKeyPair {
         secret: signing_key.to_bytes(),
         public: signing_key.verifying_key().to_bytes(),
-        signature: signature.to_vec(),
+        signature,
     }
 }
 
@@ -112,16 +115,45 @@ pub(crate) fn generate_encrypting_keypair(
     EncryptingKeyPair {
         secret: secret_key.to_bytes(),
         public: secret_key.public_key().to_bytes(),
-        signature: signature.to_vec(),
+        signature,
+    }
+}
+
+mod serde_base64 {
+    use base64::{prelude::BASE64_STANDARD, Engine};
+    use serde::Deserialize;
+
+    pub fn serialize<S>(data: &[u8], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&BASE64_STANDARD.encode(data))
+    }
+
+    pub fn deserialize<'de, D, const T: usize>(
+        deserializer: D,
+    ) -> Result<[u8; T], D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        BASE64_STANDARD
+            .decode(s)
+            .map_err(serde::de::Error::custom)?
+            .as_slice()
+            .try_into()
+            .map_err(serde::de::Error::custom)
     }
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct EncryptingKeyPair {
+    #[serde(with = "serde_base64")]
     secret: [u8; 32],
+    #[serde(with = "serde_base64")]
     public: [u8; 32],
-    // TODO: convert to constant size (see above)
-    signature: Vec<u8>,
+    #[serde(with = "serde_base64")]
+    signature: [u8; 64],
 }
 
 #[derive(Serialize, Deserialize)]
@@ -132,12 +164,14 @@ pub struct Journalist {
 
 #[derive(Serialize, Deserialize)]
 pub struct PublicJournalist {
+    #[serde(with = "serde_base64")]
     pub signing_key: [u8; 32],
-    // TODO: convert to constant size
-    pub signing_signature: Vec<u8>,
+    #[serde(with = "serde_base64")]
+    pub signing_signature: [u8; 64],
+    #[serde(with = "serde_base64")]
     pub encrypting_key: [u8; 32],
-    // TODO: convert to constant size
-    pub encrypting_signature: Vec<u8>,
+    #[serde(with = "serde_base64")]
+    pub encrypting_signature: [u8; 64],
 }
 
 /// Generate keys for a journalist, which is a signing keypair and a encrypting keypair.

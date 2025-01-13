@@ -42,13 +42,18 @@ fn add_journalist(request: AddJournalistRequest) -> Result<()> {
             .decode(request.journalist_key)?
             .as_slice()
             .try_into()?,
-        signing_signature: BASE64_STANDARD.decode(request.journalist_sig)?,
+        signing_signature: BASE64_STANDARD
+            .decode(request.journalist_sig)?
+            .as_slice()
+            .try_into()?,
         encrypting_key: BASE64_STANDARD
             .decode(request.journalist_fetching_key)?
             .as_slice()
             .try_into()?,
         encrypting_signature: BASE64_STANDARD
-            .decode(request.journalist_fetching_sig)?,
+            .decode(request.journalist_fetching_sig)?
+            .as_slice()
+            .try_into()?,
     };
 
     // FIXME: these checks should be part of the PublicJournalist constructor
