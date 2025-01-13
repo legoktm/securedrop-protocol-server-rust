@@ -1,7 +1,11 @@
 use anyhow::Result;
 use base64::prelude::*;
-use rocket::serde::json::Json;
-use securedrop_protocol::pki::{self, PublicJournalist};
+use rocket::{serde::json::Json, State};
+use sea_orm::{ActiveModelTrait, DatabaseConnection, Set};
+use securedrop_protocol::{
+    entity,
+    pki::{self, PublicJournalist},
+};
 use serde::{Deserialize, Serialize};
 
 #[macro_use]
@@ -25,18 +29,22 @@ struct AddJournalistRequest {
     journalist_fetching_sig: String,
 }
 
-#[post("/journalists", data = "<request>")]
-async fn post_journalists(
+#[post("/journalist", data = "<request>")]
+async fn post_journalist(
+    db: &State<DatabaseConnection>,
     request: Json<AddJournalistRequest>,
 ) -> Json<StatusResponse> {
-    let resp = match add_journalist(request.into_inner()) {
+    let resp = match add_journalist(db, request.into_inner()).await {
         Ok(()) => StatusResponse { status: "OK" },
         Err(_) => StatusResponse { status: "KO" },
     };
     Json(resp)
 }
 
-fn add_journalist(request: AddJournalistRequest) -> Result<()> {
+async fn add_journalist(
+    db: &DatabaseConnection,
+    request: AddJournalistRequest,
+) -> Result<()> {
     let journalist = PublicJournalist {
         signing_key: BASE64_STANDARD
             .decode(request.journalist_key)?
@@ -65,11 +73,23 @@ fn add_journalist(request: AddJournalistRequest) -> Result<()> {
         &journalist.encrypting_key,
         &journalist.encrypting_signature,
     )?;
-    // TODO figure out data storage
-    todo!();
+    let journalist = entity::journalist::ActiveModel {
+        keys: Set(serde_json::to_vec(&journalist)?),
+        ..Default::default()
+    };
+    match journalist.insert(db).await {
+        Ok(_) => Ok(()),
+        Err(e) => Err(e.into()),
+    }
 }
 
 #[launch]
-fn rocket() -> _ {
-    rocket::build().mount("/", routes![index, post_journalists])
+async fn rocket() -> _ {
+    let db = match securedrop_protocol::setup::set_up_db().await {
+        Ok(db) => db,
+        Err(e) => panic!("{}", e),
+    };
+    rocket::build()
+        .manage(db)
+        .mount("/", routes![index, post_journalist])
 }
