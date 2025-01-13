@@ -1,10 +1,11 @@
 use anyhow::{Context, Result};
+use blake2b_simd::Params as Blake2bParams;
 use crypto_box::SecretKey;
 use ed25519_dalek::{
     ed25519::signature::SignerMut, Signature, SigningKey, Verifier,
     VerifyingKey,
 };
-use rand::rngs::OsRng;
+use rand::{rngs::OsRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
 
@@ -241,4 +242,52 @@ pub fn generate_ephemeral_keypair(
     )
     .is_ok());
     pair
+}
+
+pub fn generate_passphrase() -> [u8; 32] {
+    let mut csprng = OsRng;
+    let mut passphrase = [0u8; 32];
+    csprng.fill(&mut passphrase);
+    passphrase
+}
+
+/// this function derives an EC keypair given the passphrase
+/// the prefix is useful for isolating the key. A hash/kdf is used to generate the actual seeds
+fn derive_source_key(
+    passphrase: &[u8; 32],
+    key_isolation_prefix: &'static str,
+) -> [u8; 32] {
+    Blake2bParams::new()
+        .hash_length(32)
+        .salt(key_isolation_prefix.as_bytes())
+        .hash(passphrase)
+        .as_array()[0..32]
+        .try_into()
+        // we get 64 bytes from blake2b, take the first 32 to stick into a constant-length
+        // array, which should be infallible
+        .unwrap_or_else(|_| {
+            unreachable!("32 bytes did not fit into a 32-length array")
+        })
+}
+
+struct SourceKeys {
+    // [SOURCE] LONG-TERM MESSAGE KEY
+    encryption: SecretKey,
+    // [SOURCE] LONG-TERM CHALLENGE KEY
+    signing: SigningKey,
+}
+
+impl SourceKeys {
+    fn new(passphrase: [u8; 32]) -> Self {
+        Self {
+            encryption: SecretKey::from(derive_source_key(
+                &passphrase,
+                "encryption_key-",
+            )),
+            signing: SigningKey::from(derive_source_key(
+                &passphrase,
+                "fetching_key-",
+            )),
+        }
+    }
 }

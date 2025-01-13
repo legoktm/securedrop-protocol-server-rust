@@ -12,6 +12,9 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.86"
 base64 = "0.22.1"
+# n.b. the blake2 crate from RustCrypto doesn't let us set a salt AFAICT
+# https://github.com/RustCrypto/hashes/issues/482
+blake2b_simd = "1.0.2"
 crypto_box = "0.9.1"
 ed25519-dalek = { version = "2.1.1", features = ["rand_core"] }
 rand = "0.8.5"
