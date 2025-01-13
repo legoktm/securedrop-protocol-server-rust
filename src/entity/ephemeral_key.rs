@@ -3,23 +3,30 @@
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq)]
-#[sea_orm(table_name = "journalist")]
+#[sea_orm(table_name = "ephemeral_key")]
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i32,
+    pub journalist_id: i32,
     #[sea_orm(column_type = "Blob")]
-    pub keys: Vec<u8>,
+    pub key: Vec<u8>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
-    #[sea_orm(has_many = "super::ephemeral_key::Entity")]
-    EphemeralKey,
+    #[sea_orm(
+        belongs_to = "super::journalist::Entity",
+        from = "Column::JournalistId",
+        to = "super::journalist::Column::Id",
+        on_update = "NoAction",
+        on_delete = "NoAction"
+    )]
+    Journalist,
 }
 
-impl Related<super::ephemeral_key::Entity> for Entity {
+impl Related<super::journalist::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::EphemeralKey.def()
+        Relation::Journalist.def()
     }
 }
 

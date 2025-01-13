@@ -1,7 +1,7 @@
-use anyhow::Result;
+use anyhow::{anyhow, bail, Result};
 use base64::prelude::*;
 use rocket::{serde::json::Json, State};
-use sea_orm::{ActiveModelTrait, DatabaseConnection, Set};
+use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
 use securedrop_protocol::{
     entity,
     pki::{self, PublicJournalist},
@@ -14,11 +14,19 @@ extern crate rocket;
 #[derive(Serialize)]
 struct StatusResponse {
     status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
 }
 
 #[get("/")]
 fn index() -> Json<StatusResponse> {
-    Json(StatusResponse { status: "OK" })
+    Json(StatusResponse {
+        status: "OK",
+        id: None,
+        error: None,
+    })
 }
 /// Base64-encoded journalist public keys + signature information
 #[derive(Deserialize, Debug)]
@@ -35,16 +43,47 @@ async fn post_journalist(
     request: Json<AddJournalistRequest>,
 ) -> Json<StatusResponse> {
     let resp = match add_journalist(db, request.into_inner()).await {
-        Ok(()) => StatusResponse { status: "OK" },
-        Err(_) => StatusResponse { status: "KO" },
+        Ok(id) => StatusResponse {
+            status: "OK",
+            id: Some(id),
+            error: None,
+        },
+        Err(err) => StatusResponse {
+            status: "KO",
+            id: None,
+            error: Some(err.to_string()),
+        },
     };
+    Json(resp)
+}
+
+#[post("/journalist/<journalist_id>/ephemeral", data = "<request>")]
+async fn post_journalist_ephemeral(
+    db: &State<DatabaseConnection>,
+    journalist_id: i32,
+    request: Json<Vec<pki::PublicEphemeralKey>>,
+) -> Json<StatusResponse> {
+    let resp =
+        match add_ephemeral(db, journalist_id, request.into_inner()).await {
+            Ok(()) => StatusResponse {
+                status: "OK",
+                id: None,
+                error: None,
+            },
+            Err(err) => StatusResponse {
+                status: "KO",
+                id: None,
+                error: Some(err.to_string()),
+            },
+        };
     Json(resp)
 }
 
 async fn add_journalist(
     db: &DatabaseConnection,
     request: AddJournalistRequest,
-) -> Result<()> {
+) -> Result<i32> {
+    // TODO: there's gotta be a simpler way to serde this instead of decoding everything manually
     let journalist = PublicJournalist {
         signing_key: BASE64_STANDARD
             .decode(request.journalist_key)?
@@ -73,14 +112,46 @@ async fn add_journalist(
         &journalist.encrypting_key,
         &journalist.encrypting_signature,
     )?;
+    // TODO: consider adding some uniqueness checks so that a journalist doesn't enroll multiple times
+    // or accidentally reuse keys
     let journalist = entity::journalist::ActiveModel {
         keys: Set(serde_json::to_vec(&journalist)?),
         ..Default::default()
     };
     match journalist.insert(db).await {
-        Ok(_) => Ok(()),
+        Ok(resp) => Ok(resp.id),
         Err(e) => Err(e.into()),
     }
+}
+
+async fn add_ephemeral(
+    db: &DatabaseConnection,
+    journalist_id: i32,
+    ephemerals: Vec<pki::PublicEphemeralKey>,
+) -> Result<()> {
+    if ephemerals.len() > 100 {
+        bail!("Can only register 100 ephemeral keys at a time");
+    }
+    let journalist = entity::journalist::Entity::find_by_id(journalist_id)
+        .one(db)
+        .await?
+        .ok_or_else(|| anyhow!("Journalist not found"))?;
+    let journo_key: PublicJournalist =
+        serde_json::from_slice(&journalist.keys)?;
+    for ephemeral in ephemerals {
+        // Verify the signature on the ephemeral key
+        // FIXME: make this a type-level check
+        pki::verify_ephemeral_signature(&journo_key, &ephemeral)?;
+        // TODO: need uniqueness checks
+        // TODO: do we need any replay protection here?
+        let model = entity::ephemeral_key::ActiveModel {
+            journalist_id: Set(journalist_id),
+            key: Set(serde_json::to_vec(&ephemeral)?),
+            ..Default::default()
+        };
+        model.insert(db).await?;
+    }
+    Ok(())
 }
 
 #[launch]
@@ -89,7 +160,8 @@ async fn rocket() -> _ {
         Ok(db) => db,
         Err(e) => panic!("{}", e),
     };
-    rocket::build()
-        .manage(db)
-        .mount("/", routes![index, post_journalist])
+    rocket::build().manage(db).mount(
+        "/",
+        routes![index, post_journalist, post_journalist_ephemeral],
+    )
 }

@@ -2,4 +2,5 @@
 
 pub mod prelude;
 
+pub mod ephemeral_key;
 pub mod journalist;

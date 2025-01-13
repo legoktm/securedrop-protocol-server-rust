@@ -1,6 +1,9 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use crypto_box::SecretKey;
-use ed25519_dalek::{ed25519::signature::SignerMut, Signature, SigningKey};
+use ed25519_dalek::{
+    ed25519::signature::SignerMut, Signature, SigningKey, Verifier,
+    VerifyingKey,
+};
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
@@ -20,7 +23,7 @@ impl RootKeyPair {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct SignedKeyPair {
+pub struct SigningKeyPair {
     #[serde(with = "serde_base64")]
     secret: [u8; 32],
     #[serde(with = "serde_base64")]
@@ -29,7 +32,7 @@ pub struct SignedKeyPair {
     signature: [u8; 64],
 }
 
-impl SignedKeyPair {
+impl SigningKeyPair {
     fn as_signing_key(&self) -> SigningKey {
         SigningKey::from_bytes(&self.secret)
     }
@@ -52,12 +55,12 @@ pub fn generate_root_keypair() -> RootKeyPair {
 
 /// Generate a signing key pair. This is used for the root
 /// and intermediate keys.
-pub fn generate_signed_keypair(signer: &mut SigningKey) -> SignedKeyPair {
+pub fn generate_signed_keypair(signer: &mut SigningKey) -> SigningKeyPair {
     let mut csprng = OsRng;
     let signing_key = SigningKey::generate(&mut csprng);
     // sign the public key
     let signature = sign_data(signer, &signing_key.verifying_key().to_bytes());
-    SignedKeyPair {
+    SigningKeyPair {
         secret: signing_key.to_bytes(),
         public: signing_key.verifying_key().to_bytes(),
         signature,
@@ -74,10 +77,10 @@ fn sign_data(signer: &mut SigningKey, bytes: &[u8]) -> [u8; 64] {
     signature.to_bytes()
 }
 
-fn load_intermediate_key() -> Result<SignedKeyPair> {
+fn load_intermediate_key() -> Result<SigningKeyPair> {
     // FIXME: hardcoded path
     // TODO: remove i/o from this function
-    let key: SignedKeyPair =
+    let key: SigningKeyPair =
         serde_json::from_str(&fs::read_to_string("keys/intermediate.key")?)?;
     Ok(key)
 }
@@ -99,7 +102,7 @@ pub fn verify_root_intermediate(folder: &Path) -> Result<()> {
     // Load the root and intermediate keys
     let root: RootKeyPair =
         serde_json::from_str(&fs::read_to_string(folder.join("root.key"))?)?;
-    let intermediate: SignedKeyPair = serde_json::from_str(
+    let intermediate: SigningKeyPair = serde_json::from_str(
         &fs::read_to_string(folder.join("intermediate.key"))?,
     )?;
     // Verify the signature created by the root key of the intermediate key
@@ -158,8 +161,19 @@ pub struct EncryptingKeyPair {
 
 #[derive(Serialize, Deserialize)]
 pub struct Journalist {
-    signing: SignedKeyPair,
+    signing: SigningKeyPair,
     encrypting: EncryptingKeyPair,
+}
+
+impl Journalist {
+    fn public(&self) -> PublicJournalist {
+        PublicJournalist {
+            signing_key: self.signing.public,
+            signing_signature: self.signing.signature,
+            encrypting_key: self.encrypting.public,
+            encrypting_signature: self.encrypting.signature,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -174,9 +188,38 @@ pub struct PublicJournalist {
     pub encrypting_signature: [u8; 64],
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct PublicEphemeralKey {
+    #[serde(with = "serde_base64")]
+    pub key: [u8; 32],
+    #[serde(with = "serde_base64")]
+    pub signature: [u8; 64],
+}
+
+impl PublicEphemeralKey {
+    // FIXME: this is awkward
+    fn from_keypair(pair: &EncryptingKeyPair) -> Self {
+        Self {
+            key: pair.public,
+            signature: pair.signature,
+        }
+    }
+}
+
+pub fn verify_ephemeral_signature(
+    journalist: &PublicJournalist,
+    ephemeral: &PublicEphemeralKey,
+) -> Result<()> {
+    VerifyingKey::from_bytes(&journalist.signing_key)?
+        .verify(
+            &ephemeral.key,
+            &Signature::from_slice(&ephemeral.signature)?,
+        )
+        .context("Failed to verify ephemeral signature")
+}
+
 /// Generate keys for a journalist, which is a signing keypair and a encrypting keypair.
-// TODO: have our own type for a Journalist, that covers all the key files
-pub fn generate_journalist(intermediate: &SignedKeyPair) -> Journalist {
+pub fn generate_journalist(intermediate: &SigningKeyPair) -> Journalist {
     let signing_key =
         generate_signed_keypair(&mut intermediate.as_signing_key());
     let encrypting_key =
@@ -185,4 +228,17 @@ pub fn generate_journalist(intermediate: &SignedKeyPair) -> Journalist {
         signing: signing_key,
         encrypting: encrypting_key,
     }
+}
+
+pub fn generate_ephemeral_keypair(
+    journalist: &Journalist,
+) -> EncryptingKeyPair {
+    let pair =
+        generate_encrypting_keypair(&mut journalist.signing.as_signing_key());
+    assert!(verify_ephemeral_signature(
+        &journalist.public(),
+        &PublicEphemeralKey::from_keypair(&pair)
+    )
+    .is_ok());
+    pair
 }

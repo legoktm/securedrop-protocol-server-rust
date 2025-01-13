@@ -26,17 +26,25 @@ fn initialize_keys() -> Result<()> {
     println!("Generated and signed intermediate key");
 
     // Create a journalist
-    let journo_folder = folder.join("journalist");
-    if !journo_folder.exists() {
-        fs::create_dir(&journo_folder)?;
-    }
     for i in 1..=3 {
+        let journo_folder = folder.join(format!("journalist{i}"));
+        if !journo_folder.exists() {
+            fs::create_dir(&journo_folder)?;
+        }
         let journalist = pki::generate_journalist(&intermediate);
         fs::write(
-            journo_folder.join(format!("journalist{i}.key")),
+            journo_folder.join("main.key"),
             serde_json::to_string(&journalist)?,
         )?;
-        println!("Generated and signed journalist{i} key");
+        println!("[{i}] Generated and signed main key");
+        for e in 1..=30 {
+            let ephemeral = pki::generate_ephemeral_keypair(&journalist);
+            fs::write(
+                journo_folder.join(format!("ephemeral{e}.key")),
+                serde_json::to_string(&ephemeral)?,
+            )?;
+        }
+        println!("[{i}] Generated ephemerals keys");
     }
 
     println!("Done!");
